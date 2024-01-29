@@ -5,7 +5,8 @@ const crypto =  require('crypto')
 const KeyTokenService = require("./keyToken.service")
 const { createTokenPair} = require("../auth/authUtils")
 const { getInFoData } = require("../utils")
-const {BadRequestError,ConflictRequestError} = require("../core/error.response")
+const {BadRequestError,ConflictRequestError, AuthFailureError} = require("../core/error.response")
+const { findByEmail } = require("./shop.service")
 const RoleShop = {
     SHOP : 'SHOP',
     WRITE : 'WRITER',
@@ -13,6 +14,35 @@ const RoleShop = {
     ADMIN : 'ADMIN'
 }
 class AccessService {
+    /*
+    1 : check email in dbs
+    2 : match password 
+    3 : created at vs rt
+    4 : get data return login
+    */ 
+    static login = async ( {email,password,refreshToken = null}) => {
+        //1.
+        const foundShop = await findByEmail({email})
+        if(!foundShop) throw new BadRequestError('Error : Shop not register')
+        //2.
+        const match = bcrypt.compare(password,foundShop.password)
+
+        if(!match) throw new AuthFailureError('Authen error')
+
+        //3.
+        const privateKey = crypto.randomBytes(64).toString('hex')
+        const publicKey = crypto.randomBytes(64).toString('hex')
+        //4.
+        const tokens = await createTokenPair({userId: foundShop._id, email},publicKey, privateKey)
+        await KeyTokenService.createKeyToken({
+            refreshToken : tokens.refreshToken,
+            privateKey,publicKey,userId: foundShop._id
+        })
+        return {
+           shop : getInFoData({fileds : ['_id','name','email'],object: foundShop}),
+           tokens
+        }
+    }
     static signUp = async ({name, email, password}) => {
         try{
             // step 1 : check email exists??
@@ -77,6 +107,11 @@ class AccessService {
                 status : 'error'
             }
         }
+    }
+    static logout = async( keyStore) => {
+        const delKey = await KeyTokenService.removeTokenById({id : keyStore._id})
+        console.log(delKey)
+        return delKey
     }
 }
 
